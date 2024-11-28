@@ -1,70 +1,41 @@
-import { PrismaClient } from '@prisma/client/extension';
-import { withAccelerate } from '@prisma/extension-accelerate';
+import { Client } from 'pg';
 import { Hono } from 'hono';
-import { Context } from 'hono';
-import { jwt, sign } from 'hono/jwt';
+import { sign } from 'hono/jwt';
 
+// Create the main Hono app
 const app = new Hono<{
   Bindings: {
-    DATABASE_URL: string;
-    JWT_SECRET: string;
-  };
+    DATABASE_URL: string,
+    JWT_SECRET: string,
+  }
 }>();
 
-app.post('/api/v1/signup', async (c: Context) => {
-  // Log the incoming request body
+app.post('/api/v1/signup', async (c) => {
+  const client = new Client({
+    connectionString: c.env.DATABASE_URL,
+  });
+
+  await client.connect();
+
+  const body = await c.req.json();
   try {
-    const body = await c.req.json();
-    console.log('Request Body:', body);
+    const query = 'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id';
+    const values = [body.email, body.password];
+    const res = await client.query(query, values);
 
-    // Initialize Prisma with Accelerate extension
-    const prisma = new PrismaClient({
-      datasourceUrl: c.env.DATABASE_URL,
-    }).$extend(withAccelerate());
+    const userId = res.rows[0].id;
+    const jwt = await sign({ id: userId }, c.env.JWT_SECRET);
 
-    // Check if user creation works
-    const user = await prisma.user.create({
-      data: {
-        email: body.email,
-        password: body.password,
-      },
-    });
+    await client.end();
 
-    console.log('User Created:', user);
-
-    // Generate JWT token
-    const token = sign({ id: user.id }, c.env.JWT_SECRET);
-
-    return c.json({
-      jwt: token,
-    });
-  } catch (error) {
-    console.error('Error in /api/v1/signup:', error);
-
-    return c.json(
-      {
-        error: 'Something went wrong.',
-        details: error.message,
-      },
-      500
-    );
+    return c.json({ jwt });
+  } catch (e) {
+    console.error('Error while signing up:', e);
+    await client.end();
+    c.status(403);
+    return c.json({ error: 'error while signing up' });
   }
 });
 
-app.post('/api/v1/login', (c) => {
-  return c.text('Hello Hono!');
-});
-
-app.post('/api/v1/blog', (c) => {
-  return c.text('Hello Hono!');
-});
-
-app.put('/api/v1/blog', (c) => {
-  return c.text('Hello Hono!');
-});
-
-app.get('/api/v1/blog/:id', (c) => {
-  return c.text('Hello Hono!');
-});
 
 export default app;
